@@ -1,0 +1,291 @@
+// Prisma schema for Honey Badger app
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  phone     String?
+  username  String   @unique
+  firstName String
+  lastName  String
+  avatar    String?
+  bio       String?
+  
+  // Authentication
+  password  String
+  isVerified Boolean @default(false)
+  
+  // App settings
+  timezone  String   @default("America/New_York")
+  notifications Boolean @default(true)
+  
+  // Relationships
+  sentChallenges     Challenge[] @relation("ChallengeSender")
+  receivedChallenges Challenge[] @relation("ChallengeRecipient")
+  honeyBadgers       HoneyBadger[]
+  chatMessages       ChatMessage[]
+  achievements       Achievement[]
+  friends            Friendship[] @relation("UserFriends")
+  friendOf           Friendship[] @relation("FriendOf")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("users")
+}
+
+model HoneyBadger {
+  id           String   @id @default(cuid())
+  name         String
+  personality  PersonalityType
+  avatar       String
+  level        Int      @default(1)
+  experience   Int      @default(0)
+  
+  // Ownership
+  ownerId      String
+  owner        User     @relation(fields: [ownerId], references: [id])
+  
+  // Current assignment
+  challengeId  String?  @unique
+  challenge    Challenge? @relation(fields: [challengeId], references: [id])
+  
+  // Chat history
+  chatMessages ChatMessage[]
+  
+  // Badger stats
+  successfulChallenges Int @default(0)
+  totalChallenges      Int @default(0)
+  
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@map("honey_badgers")
+}
+
+model Challenge {
+  id          String        @id @default(cuid())
+  title       String
+  description String
+  
+  // Challenge details
+  type        ChallengeType
+  difficulty  DifficultyLevel @default(MEDIUM)
+  deadline    DateTime?
+  
+  // Verification requirements
+  verificationMethod VerificationMethod
+  verificationData   Json? // Store specific verification requirements
+  
+  // Reward details
+  rewardType    RewardType
+  rewardAmount  Float?
+  rewardMessage String?
+  rewardMedia   String[] // URLs to images/videos
+  
+  // Challenge status
+  status       ChallengeStatus @default(PENDING)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  
+  // Participants
+  senderId     String
+  sender       User @relation("ChallengeSender", fields: [senderId], references: [id])
+  recipientId  String
+  recipient    User @relation("ChallengeRecipient", fields: [recipientId], references: [id])
+  
+  // Assigned honey badger
+  honeyBadger  HoneyBadger?
+  
+  // Progress tracking
+  progressUpdates ProgressUpdate[]
+  chatMessages    ChatMessage[]
+  
+  // Payment info (if monetary reward)
+  stripePaymentIntentId String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("challenges")
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  content   String
+  messageType MessageType @default(TEXT)
+  
+  // Sender info
+  senderId  String?
+  sender    User?   @relation(fields: [senderId], references: [id])
+  
+  // Honey badger sender (if AI message)
+  honeyBadgerId String?
+  honeyBadger   HoneyBadger? @relation(fields: [honeyBadgerId], references: [id])
+  
+  // Challenge context
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  
+  // Message metadata
+  mediaUrl    String?
+  isRead      Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  
+  @@map("chat_messages")
+}
+
+model ProgressUpdate {
+  id          String   @id @default(cuid())
+  
+  // Update details
+  updateType  UpdateType
+  content     String
+  mediaUrls   String[]
+  metadata    Json? // Store verification data, fitness metrics, etc.
+  
+  // Progress value (0-100%)
+  progressPercent Float @default(0)
+  
+  // Verification status
+  isVerified  Boolean @default(false)
+  verifiedAt  DateTime?
+  
+  // Challenge reference
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  
+  createdAt DateTime @default(now())
+  
+  @@map("progress_updates")
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  icon        String
+  category    AchievementCategory
+  
+  // Achievement requirements
+  requirement Json // Flexible requirement definition
+  
+  // User who earned it
+  userId      String
+  user        User @relation(fields: [userId], references: [id])
+  
+  earnedAt DateTime @default(now())
+  
+  @@map("achievements")
+}
+
+model Friendship {
+  id        String   @id @default(cuid())
+  
+  userId    String
+  user      User @relation("UserFriends", fields: [userId], references: [id])
+  
+  friendId  String
+  friend    User @relation("FriendOf", fields: [friendId], references: [id])
+  
+  status    FriendshipStatus @default(PENDING)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, friendId])
+  @@map("friendships")
+}
+
+// Enums
+enum PersonalityType {
+  RELENTLESS
+  CHEERLEADER
+  COACH
+  BUDDY
+  COMPETITOR
+}
+
+enum ChallengeType {
+  FITNESS
+  HABIT
+  LEARNING
+  CREATIVE
+  SOCIAL
+  CUSTOM
+}
+
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
+  EXTREME
+}
+
+enum VerificationMethod {
+  PHOTO
+  VIDEO
+  FITNESS_TRACKER
+  LOCATION
+  MANUAL
+  TIME_BASED
+  CHECKIN
+}
+
+enum RewardType {
+  MONEY
+  GIFT_CARD
+  MESSAGE
+  PHOTO
+  VIDEO
+  CUSTOM
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  SYSTEM
+  ACHIEVEMENT
+}
+
+enum UpdateType {
+  PROGRESS
+  PHOTO_VERIFICATION
+  VIDEO_VERIFICATION
+  FITNESS_DATA
+  CHECK_IN
+  MILESTONE
+}
+
+enum AchievementCategory {
+  CHALLENGE_COMPLETION
+  STREAK
+  SOCIAL
+  BADGER_BONDING
+  MILESTONE
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
