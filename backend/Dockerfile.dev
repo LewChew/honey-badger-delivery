@@ -1,0 +1,37 @@
+FROM node:18-alpine
+
+# Install system dependencies
+RUN apk add --no-cache \
+    curl \
+    git \
+    python3 \
+    make \
+    g++
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Create logs directory
+RUN mkdir -p logs
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# Start development server
+CMD ["npm", "run", "dev"]

@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: honeybadger-postgres
+    environment:
+      POSTGRES_DB: honeybadger_dev
+      POSTGRES_USER: honeybadger
+      POSTGRES_PASSWORD: honeybadger_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - honeybadger-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeybadger -d honeybadger_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: honeybadger-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - honeybadger-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass honeybadger_redis_password
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: honeybadger-backend
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://honeybadger:honeybadger_password@postgres:5432/honeybadger_dev
+      REDIS_URL: redis://:honeybadger_redis_password@redis:6379
+      JWT_SECRET: development-jwt-secret-key
+      JWT_EXPIRES_IN: 7d
+      API_BASE_URL: http://localhost:3000
+      FRONTEND_URL: http://localhost:8081
+      PORT: 3000
+      # OpenAI API Key (add your own)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Stripe Keys (add your own)
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      # AWS S3 Config (add your own)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-honeybadger-dev}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - backend_logs:/app/logs
+    networks:
+      - honeybadger-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: npm run dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # React Native Metro Bundler (for development)
+  metro:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: honeybadger-metro
+    environment:
+      REACT_NATIVE_PACKAGER_HOSTNAME: 0.0.0.0
+      API_BASE_URL: http://localhost:3000/api
+      SOCKET_URL: http://localhost:3000
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - honeybadger-network
+    restart: unless-stopped
+    command: npm start
+
+  # pgAdmin (Database Management UI)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: honeybadger-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@honeybadger.dev
+      PGADMIN_DEFAULT_PASSWORD: admin_password
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - honeybadger-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # Redis Commander (Redis Management UI)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: honeybadger-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:honeybadger_redis_password
+      HTTP_USER: admin
+      HTTP_PASSWORD: admin_password
+    ports:
+      - "8082:8081"
+    networks:
+      - honeybadger-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (for production-like setup)
+  nginx:
+    image: nginx:alpine
+    container_name: honeybadger-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - honeybadger-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  backend_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  honeybadger-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
